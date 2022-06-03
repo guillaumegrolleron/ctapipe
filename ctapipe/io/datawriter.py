@@ -292,9 +292,10 @@ class DataWriter(Component):
 
     def finish(self):
         """called after all events are done"""
-        self.log.info("Finishing DL1 output")
+        self.log.info("Finishing output")
         if not self._at_least_one_event:
             self.log.warning("No events have been written to the output file")
+
         if self._writer:
             if self.write_index_tables:
                 self._generate_indices()

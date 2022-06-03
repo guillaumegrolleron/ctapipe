@@ -10,6 +10,7 @@ from typing import Union
 import yaml
 from docutils.core import publish_parts
 from inspect import cleandoc
+from contextlib import ExitStack
 
 try:
     import tomli as toml
@@ -93,11 +94,14 @@ class Tool(Application):
                                  allow_none=False).tag(config=True)
 
             def setup_comp(self):
-                self.comp = MyComponent(self, parent=self)
-                self.comp2 = SecondaryMyComponent(self, parent=self)
+                self.comp = MyComponent(parent=self)
+                self.comp2 = SecondaryMyComponent(parent=self)
+                # correct use of compenent that works like a context manager
+                # using it like this makes sure __exit__ will be called
+                self.comp3 = self.enter_context(MyComponent(parent=self))
 
             def setup_advanced(self):
-                self.advanced = AdvancedComponent(self, parent=self)
+                self.advanced = AdvancedComponent(parent=self)
 
             def setup(self):
                 self.setup_comp()
@@ -172,6 +176,8 @@ class Tool(Application):
     def __init__(self, **kwargs):
         # make sure there are some default aliases in all Tools:
         super().__init__(**kwargs)
+        self.exit_stack = ExitStack()
+
         aliases = {
             ("c", "config"): "Tool.config_files",
             "log-level": "Tool.log_level",
@@ -201,6 +207,10 @@ class Tool(Application):
         self.log = logging.getLogger(f"{module_name}.{self.name}")
         self.trait_warning_handler = CollectTraitWarningsHandler()
         self.update_logging_config()
+
+    def enter_context(self, cm):
+        """Enter a context manager, __exit__ will be called at the end of Tool.run"""
+        return self.exit_stack.enter_context(cm)
 
     def initialize(self, argv=None):
         """handle config and any other low-level setup"""
@@ -331,40 +341,43 @@ class Tool(Application):
 
         exit_status = 0
 
-        try:
-            self.initialize(argv)
-            self.log.info(f"Starting: {self.name}")
-            Provenance().start_activity(self.name)
-            self.setup()
-            self.is_setup = True
-            self.log.debug(f"CONFIG: {self.get_current_config()}")
-            Provenance().add_config(self.get_current_config())
+        with self.exit_stack:
+            try:
+                self.initialize(argv)
+                self.log.info(f"Starting: {self.name}")
+                Provenance().start_activity(self.name)
+                self.setup()
+                self.is_setup = True
+                self.log.debug(f"CONFIG: {self.get_current_config()}")
+                Provenance().add_config(self.get_current_config())
 
-            # check for any traitlets warnings using our custom handler
-            if len(self.trait_warning_handler.errors) > 0:
-                raise ToolConfigurationError("Found config errors")
+                # check for any traitlets warnings using our custom handler
+                if len(self.trait_warning_handler.errors) > 0:
+                    raise ToolConfigurationError("Found config errors")
 
-            # remove handler to not impact performance with regex matching
-            self.log.removeHandler(self.trait_warning_handler)
+                # remove handler to not impact performance with regex matching
+                self.log.removeHandler(self.trait_warning_handler)
 
-            self.start()
-            self.finish()
-            self.log.info(f"Finished: {self.name}")
-            Provenance().finish_activity(activity_name=self.name)
-        except ToolConfigurationError as err:
-            self.log.error(f"{err}.  Use --help for more info")
-            exit_status = 2  # wrong cmd line parameter
-        except KeyboardInterrupt:
-            self.log.warning("WAS INTERRUPTED BY CTRL-C")
-            Provenance().finish_activity(activity_name=self.name, status="interrupted")
-            exit_status = 130  # Script terminated by Control-C
-        except Exception as err:
-            self.log.exception(f"Caught unexpected exception: {err}")
-            Provenance().finish_activity(activity_name=self.name, status="error")
-            exit_status = 1  # any other error
-        finally:
-            if not {"-h", "--help", "--help-all"}.intersection(self.argv):
-                self.write_provenance()
+                self.start()
+                self.finish()
+                self.log.info(f"Finished: {self.name}")
+                Provenance().finish_activity(activity_name=self.name)
+            except ToolConfigurationError as err:
+                self.log.error(f"{err}.  Use --help for more info")
+                exit_status = 2  # wrong cmd line parameter
+            except KeyboardInterrupt:
+                self.log.warning("WAS INTERRUPTED BY CTRL-C")
+                Provenance().finish_activity(
+                    activity_name=self.name, status="interrupted"
+                )
+                exit_status = 130  # Script terminated by Control-C
+            except Exception as err:
+                self.log.exception(f"Caught unexpected exception: {err}")
+                Provenance().finish_activity(activity_name=self.name, status="error")
+                exit_status = 1  # any other error
+            finally:
+                if not {"-h", "--help", "--help-all"}.intersection(self.argv):
+                    self.write_provenance()
 
         self.exit(exit_status)
 

@@ -147,7 +147,7 @@ class ProcessorTool(Tool):
     def setup(self):
 
         # setup components:
-        self.event_source = EventSource(parent=self)
+        self.event_source = self.enter_context(EventSource(parent=self))
         if not self.event_source.has_any_datalevel(COMPATIBLE_DATALEVELS):
             self.log.critical(
                 "%s  needs the EventSource to provide either R1 or DL0 or DL1A data"
@@ -167,7 +167,9 @@ class ProcessorTool(Tool):
         self.process_shower = ShowerProcessor(
             subarray=self.event_source.subarray, parent=self
         )
-        self.write = DataWriter(event_source=self.event_source, parent=self)
+        self.write = self.enter_context(
+            DataWriter(event_source=self.event_source, parent=self)
+        )
         self.event_type_filter = EventTypeFilter(parent=self)
 
         # warn if max_events prevents writing the histograms
@@ -184,7 +186,7 @@ class ProcessorTool(Tool):
 
     @property
     def should_compute_dl2(self):
-        """ returns true if we should compute DL2 info """
+        """returns true if we should compute DL2 info"""
         if self.force_recompute_dl2:
             return True
         return self.write.write_stereo_shower or self.write.write_mono_shower
@@ -275,13 +277,11 @@ class ProcessorTool(Tool):
         Last steps after processing events.
         """
         self.write.write_simulation_histograms(self.event_source)
-        self.write.finish()
-        self.event_source.close()
         self._write_processing_statistics()
 
 
 def main():
-    """ run the tool"""
+    """run the tool"""
     tool = ProcessorTool()
     tool.run()
 

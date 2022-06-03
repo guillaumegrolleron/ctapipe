@@ -12,7 +12,6 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from ..io import metadata as meta, HDF5EventSource, get_hdf5_datalevels
-from ..io import HDF5TableWriter
 from ..core import Provenance, Tool, traits
 from ..core.traits import Bool, Set, Unicode, flag, CInt
 from ..instrument import SubarrayDescription
@@ -273,7 +272,9 @@ class MergeTool(Tool):
             }
 
         self.first_subarray.to_hdf(self.output_path)
-        self.output_file = tables.open_file(self.output_path, mode="a")
+        self.output_file = self.enter_context(
+            tables.open_file(self.output_path, mode="a")
+        )
 
     def check_file_broken(self, file):
         # Check that the file is not broken or any node is missing
@@ -441,7 +442,6 @@ class MergeTool(Tool):
 
     def finish(self):
         datalevels = [d.name for d in get_hdf5_datalevels(self.output_file)]
-        self.output_file.close()
 
         activity = PROV.current_activity.provenance
         process_type_ = "Observation"
@@ -472,11 +472,7 @@ class MergeTool(Tool):
         )
 
         headers = reference.to_dict()
-
-        with HDF5TableWriter(
-            self.output_path, parent=self, mode="a", add_prefix=True
-        ) as writer:
-            meta.write_to_hdf5(headers, writer.h5file)
+        meta.write_to_hdf5(headers, self.output_file)
 
 
 def main():

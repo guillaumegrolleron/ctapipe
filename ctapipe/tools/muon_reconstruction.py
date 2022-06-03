@@ -103,15 +103,15 @@ class MuonAnalysis(Tool):
                 "Outputfile {self.output} already exists, use `--overwrite` to overwrite"
             )
 
-        self.source = EventSource(parent=self)
+        self.source = self.enter_context(EventSource(parent=self))
         subarray = self.source.subarray
 
         self.calib = CameraCalibrator(subarray=subarray, parent=self)
         self.ring_fitter = MuonRingFitter(parent=self)
         self.intensity_fitter = MuonIntensityFitter(subarray=subarray, parent=self)
         self.cleaning = TailcutsImageCleaner(parent=self, subarray=subarray)
-        self.writer = HDF5TableWriter(
-            self.output, "", add_prefix=True, parent=self, mode="w"
+        self.writer = self.enter_context(
+            HDF5TableWriter(self.output, "", add_prefix=True, parent=self, mode="w")
         )
         self.pixels_in_tel_frame = {}
         self.field_of_view = {}
@@ -294,7 +294,6 @@ class MuonAnalysis(Tool):
 
     def finish(self):
         Provenance().add_output_file(self.output, role="muon_efficiency_parameters")
-        self.writer.close()
 
 
 def main():

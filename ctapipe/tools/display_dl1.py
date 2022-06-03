@@ -1,6 +1,7 @@
 """
 Calibrate dl0 data to dl1, and plot the photoelectron images.
 """
+from contextlib import ExitStack
 from copy import copy
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -11,7 +12,6 @@ from ..core.traits import Bool, Path, flag, Int, classes_with_traits
 from ..image.extractor import ImageExtractor
 from ..io import EventSource
 from ..io.datalevels import DataLevel
-from ..utils import get_dataset_path
 from ..visualization import CameraDisplay
 
 
@@ -56,6 +56,7 @@ class ImagePlotter(Component):
         self.cb_peak_time = None
         self.pdf = None
         self.subarray = subarray
+        self.exit_stack = ExitStack()
 
         self._init_figure()
 
@@ -65,7 +66,7 @@ class ImagePlotter(Component):
         self.ax_peak_time = self.fig.add_subplot(1, 2, 2)
         if self.output_path:
             self.log.info(f"Creating PDF: {self.output_path}")
-            self.pdf = PdfPages(self.output_path)
+            self.pdf = self.exit_stack.enter_context(PdfPages(self.output_path))
 
     def plot(self, event, telid):
         image = event.dl1.tel[telid].image
@@ -122,10 +123,11 @@ class ImagePlotter(Component):
         if self.pdf is not None:
             self.pdf.savefig(self.fig)
 
-    def finish(self):
-        if self.pdf is not None:
-            self.log.info("Closing PDF")
-            self.pdf.close()
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.exit_stack.__exit__(exc_type, exc_value, traceback)
 
 
 class DisplayDL1Calib(Tool):
@@ -154,15 +156,9 @@ class DisplayDL1Calib(Tool):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.config.EventSource.input_url = get_dataset_path(
-            "gamma_test_large.simtel.gz"
-        )
-        self.eventsource = None
-        self.calibrator = None
-        self.plotter = None
 
     def setup(self):
-        self.eventsource = EventSource.from_config(parent=self)
+        self.eventsource = self.enter_context(EventSource(parent=self))
         compatible_datalevels = [DataLevel.R1, DataLevel.DL0, DataLevel.DL1_IMAGES]
 
         if not self.eventsource.has_any_datalevel(compatible_datalevels):
@@ -173,7 +169,7 @@ class DisplayDL1Calib(Tool):
         subarray = self.eventsource.subarray
 
         self.calibrator = CameraCalibrator(parent=self, subarray=subarray)
-        self.plotter = ImagePlotter(parent=self, subarray=subarray)
+        self.plotter = self.enter_context(ImagePlotter(parent=self, subarray=subarray))
 
     def start(self):
         for event in self.eventsource:
@@ -189,9 +185,6 @@ class DisplayDL1Calib(Tool):
 
             for telid in tel_list:
                 self.plotter.plot(event, telid)
-
-    def finish(self):
-        self.plotter.finish()
 
 
 def main():
